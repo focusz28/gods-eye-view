@@ -372,6 +372,28 @@ export function isLikelyFinlandCoordinate(lat, lon) {
   return lat >= 59.5 && lat <= 70.5 && lon >= 19 && lon <= 32;
 }
 
+/** Taiwan bounding box (main island, Penghu, Kinmen, Matsu). */
+export function isLikelyTaiwanCoordinate(lat, lon) {
+  return (
+    isPlausibleLatLon(lat, lon) &&
+    lat >= 21.5 &&
+    lat <= 26.5 &&
+    lon >= 118.0 &&
+    lon <= 123.0
+  );
+}
+
+/** Washington State bounding box (including coastal waters, islands, and border crossings). */
+export function isLikelyWashingtonCoordinate(lat, lon) {
+  return (
+    isPlausibleLatLon(lat, lon) &&
+    lat >= 45.0 &&
+    lat <= 49.5 &&
+    lon >= -125.0 &&
+    lon <= -116.5
+  );
+}
+
 /**
  * Human label for one Fintraffic preset (camera view).
  *

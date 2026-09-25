@@ -244,6 +244,58 @@ export const DELDOT_ANCHORS = [
   { lat: 39.1582, lon: -75.5244 }, // Dover (Kent)
   { lat: 38.6906, lon: -75.3877 }, // Georgetown (Sussex)
 ];
+
+/** Taiwan MOTC Freeway and Highway Bureau CCTV feeds. */
+export const DEFAULT_TAIWAN_FREEWAY_URL =
+  'https://thbapp.thb.gov.tw/services/cctv/freeway';
+export const DEFAULT_TAIWAN_THB_URL =
+  'https://thbapp.thb.gov.tw/services/cctv/thb';
+export const DEFAULT_TAIWAN_MAX_SOURCES = 300;
+export const TAIWAN_MAX_CATALOG_BYTES = 4 * 1024 * 1024;
+export const TAIWAN_ANCHORS = [
+  { lat: 25.033, lon: 121.5654, name: 'Taipei' },
+  { lat: 25.0123, lon: 121.4657, name: 'New Taipei' },
+  { lat: 24.9936, lon: 121.301, name: 'Taoyuan' },
+  { lat: 24.8138, lon: 120.9675, name: 'Hsinchu' },
+  { lat: 24.5602, lon: 120.8214, name: 'Miaoli' },
+  { lat: 24.1477, lon: 120.6736, name: 'Taichung' },
+  { lat: 24.0815, lon: 120.5385, name: 'Changhua' },
+  { lat: 23.9099, lon: 120.6853, name: 'Nantou' },
+  { lat: 23.7092, lon: 120.4313, name: 'Yunlin' },
+  { lat: 23.48, lon: 120.4491, name: 'Chiayi' },
+  { lat: 22.9997, lon: 120.227, name: 'Tainan' },
+  { lat: 22.6273, lon: 120.3014, name: 'Kaohsiung' },
+  { lat: 22.6762, lon: 120.4885, name: 'Pingtung' },
+  { lat: 25.1276, lon: 121.7392, name: 'Keelung' },
+  { lat: 24.757, lon: 121.753, name: 'Yilan' },
+  { lat: 23.9872, lon: 121.6016, name: 'Hualien' },
+  { lat: 22.7583, lon: 121.1444, name: 'Taitung' },
+];
+
+/** Washington State Department of Transportation (WSDOT) CCTV feeds. */
+export const DEFAULT_WSDOT_URL =
+  'https://data.wsdot.wa.gov/arcgis/rest/services/TravelInformation/TravelInfoCamerasWeather/FeatureServer/0/query?where=1%3D1&outFields=*&outSR=4326&f=json';
+export const DEFAULT_WSDOT_MAX_SOURCES = 300;
+export const WSDOT_MAX_CATALOG_BYTES = 5 * 1024 * 1024;
+export const WASHINGTON_ANCHORS = [
+  { lat: 47.6062, lon: -122.3321, name: 'Seattle' },
+  { lat: 47.6101, lon: -122.2015, name: 'Bellevue' },
+  { lat: 47.2529, lon: -122.4443, name: 'Tacoma' },
+  { lat: 47.9789, lon: -122.2021, name: 'Everett' },
+  { lat: 47.6588, lon: -117.426, name: 'Spokane' },
+  { lat: 45.6387, lon: -122.6615, name: 'Vancouver' },
+  { lat: 47.0379, lon: -122.9007, name: 'Olympia' },
+  { lat: 48.7519, lon: -122.4787, name: 'Bellingham' },
+  { lat: 46.2112, lon: -119.1372, name: 'Tri-Cities' },
+  { lat: 46.6021, lon: -120.5059, name: 'Yakima' },
+  { lat: 47.4235, lon: -120.3103, name: 'Wenatchee' },
+  { lat: 48.4212, lon: -122.334, name: 'Mount Vernon' },
+  { lat: 47.4243, lon: -121.4138, name: 'Snoqualmie Pass' },
+  { lat: 47.7465, lon: -121.089, name: 'Stevens Pass' },
+  { lat: 46.7313, lon: -117.1796, name: 'Pullman' },
+  { lat: 48.1181, lon: -123.4307, name: 'Port Angeles' },
+  { lat: 46.9754, lon: -123.8157, name: 'Aberdeen' },
+];
 /** Camera CATALOGS change rarely; 15 min keeps multi-megabyte upstream list refetches (Austin rows.json + 4 Caltrans districts + TfL + Ontario 511) infrequent. Frames are fetched per-request and are unaffected. */
 export const CCTV_SOURCE_CACHE_MS = 15 * 60 * 1000;
 /** Per-provider catalog-fetch timeout. Bounds the worst-case refresh so one

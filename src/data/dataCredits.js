@@ -169,6 +169,20 @@ export const DATA_CREDITS = [
     html: 'CCTV live video (Delaware): <a href="https://deldot.gov/map/" target="_blank" rel="noopener">DelDOT — Delaware Department of Transportation</a>',
   },
   {
+    key: 'taiwan-cctv',
+    html:
+      'CCTV cameras &amp; live video (Taiwan): ' +
+      '<a href="https://data.gov.tw/" target="_blank" rel="noopener">Taiwan Ministry of Transportation and Communications (MOTC) &amp; Freeway Bureau</a> ' +
+      '(Open Government Data)',
+  },
+  {
+    key: 'wsdot-cctv',
+    html:
+      'CCTV cameras &amp; frames (Washington State): ' +
+      '<a href="https://wsdot.wa.gov/" target="_blank" rel="noopener">Washington State Department of Transportation (WSDOT)</a> ' +
+      '(Open Data)',
+  },
+  {
     key: 'caltrans-cctv',
     html:
       'CCTV cameras &amp; frames (California): Caltrans — ' +

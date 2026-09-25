@@ -505,6 +505,97 @@ export function cctvUpstreamUserAgent(url) {
 }
 
 /**
+ * Extract the first complete JPEG frame from an MJPEG multipart/x-mixed-replace stream.
+ *
+ * Scans for the SOI marker (0xFF, 0xD8) and the subsequent EOI marker (0xFF, 0xD9),
+ * cancels the stream immediately once a full frame is captured, and respects maxBytes.
+ *
+ * @param {Response} upstream
+ * @param {number} maxBytes
+ * @returns {Promise<Buffer|null>}
+ */
+export async function extractFirstMjpegFrame(upstream, maxBytes) {
+  if (!upstream?.body) return null;
+  let buffer = Buffer.alloc(0);
+  let startIndex = -1;
+  let endIndex = -1;
+
+  const processChunk = (chunk) => {
+    buffer = Buffer.concat([buffer, Buffer.from(chunk)]);
+    if (startIndex === -1) {
+      for (let i = 0; i < buffer.length - 1; i++) {
+        if (buffer[i] === 0xff && buffer[i + 1] === 0xd8) {
+          startIndex = i;
+          break;
+        }
+      }
+    }
+    if (startIndex !== -1) {
+      const searchStart = Math.max(
+        startIndex + 2,
+        buffer.length - chunk.length - 2,
+      );
+      for (let i = searchStart; i < buffer.length - 1; i++) {
+        if (buffer[i] === 0xff && buffer[i + 1] === 0xd9) {
+          endIndex = i + 2;
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  if (typeof upstream.body[Symbol.asyncIterator] === 'function') {
+    try {
+      for await (const chunk of upstream.body) {
+        if (processChunk(chunk)) {
+          try {
+            await upstream.body.cancel?.();
+          } catch {
+            /* no-op */
+          }
+          return buffer.subarray(startIndex, endIndex);
+        }
+        if (buffer.length > maxBytes) {
+          try {
+            await upstream.body.cancel?.();
+          } catch {
+            /* no-op */
+          }
+          return null;
+        }
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+
+  const reader =
+    typeof upstream.body.getReader === 'function'
+      ? upstream.body.getReader()
+      : null;
+  if (!reader) return null;
+  try {
+    while (buffer.length <= maxBytes) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (processChunk(value)) {
+        await reader.cancel().catch(() => {});
+        return buffer.subarray(startIndex, endIndex);
+      }
+    }
+    await reader.cancel().catch(() => {});
+    return null;
+  } catch {
+    await reader.cancel().catch(() => {});
+    return null;
+  } finally {
+    reader.releaseLock?.();
+  }
+}
+
+/**
  * Fetch one upstream CCTV image within the frame-refresh budget.
  *
  * A timeout is treated like every other upstream miss so the caller can
@@ -544,7 +635,16 @@ export async function fetchCctvImageFromUpstream(
     );
     if (!upstream) return null;
     const contentType = upstream.headers.get('content-type') || '';
-    if (!upstream.ok || !contentType.startsWith('image/')) {
+    if (!upstream.ok) {
+      controller.abort();
+      return null;
+    }
+    if (contentType.startsWith('multipart/x-mixed-replace')) {
+      const frame = await extractFirstMjpegFrame(upstream, maxBytes);
+      if (!frame) return null;
+      return { ok: true, body: frame, contentType: 'image/jpeg' };
+    }
+    if (!contentType.startsWith('image/')) {
       controller.abort();
       return null;
     }

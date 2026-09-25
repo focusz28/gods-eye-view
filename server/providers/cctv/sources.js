@@ -59,6 +59,15 @@ import {
   DELDOT_CCTV_URL,
   DEFAULT_DELDOT_MAX_SOURCES,
   DELDOT_ANCHORS,
+  DEFAULT_TAIWAN_FREEWAY_URL,
+  DEFAULT_TAIWAN_THB_URL,
+  DEFAULT_TAIWAN_MAX_SOURCES,
+  TAIWAN_MAX_CATALOG_BYTES,
+  TAIWAN_ANCHORS,
+  DEFAULT_WSDOT_URL,
+  DEFAULT_WSDOT_MAX_SOURCES,
+  WSDOT_MAX_CATALOG_BYTES,
+  WASHINGTON_ANCHORS,
 } from './constants.js';
 import {
   toFiniteNumber,
@@ -69,6 +78,8 @@ import {
   isLikelyAustinCoordinate,
   fallbackHeadingFromId,
   isLikelyFinlandCoordinate,
+  isLikelyTaiwanCoordinate,
+  isLikelyWashingtonCoordinate,
   fintrafficCameraName,
   hashSeed,
   isPlausibleLatLon,
@@ -1696,6 +1707,375 @@ export async function loadDelDOTSourcesFromOpenData() {
   } catch (error) {
     console.warn(
       '[CCTV] DelDOT source download error:',
+      error?.message || error,
+    );
+    return [];
+  }
+}
+
+/**
+ * Determine the nearest Taiwan reference city for a given coordinate.
+ *
+ * @param {number} lat
+ * @param {number} lon
+ * @returns {string} City name.
+ */
+export function findNearestTaiwanCity(lat, lon) {
+  let best = TAIWAN_ANCHORS[0].name;
+  let minD = Infinity;
+  for (const anchor of TAIWAN_ANCHORS) {
+    const d = (anchor.lat - lat) ** 2 + (anchor.lon - lon) ** 2;
+    if (d < minD) {
+      minD = d;
+      best = anchor.name;
+    }
+  }
+  return best;
+}
+
+/**
+ * Infer camera compass heading from Taiwan freeway ID or name.
+ *
+ * @param {string} id - Camera ID (e.g. "CCTV-N1-S-0.000-M").
+ * @param {string} name - Camera name/section (e.g. "國道1號(基隆端到基隆交流道)").
+ * @returns {number|null} Compass heading [0..360) or null.
+ */
+export function extractTaiwanHeading(id, name) {
+  const match = /-([NSEW])-/i.exec(String(id || ''));
+  if (match) {
+    const dir = match[1].toUpperCase();
+    if (dir === 'N') return 0;
+    if (dir === 'S') return 180;
+    if (dir === 'E') return 90;
+    if (dir === 'W') return 270;
+  }
+  const str = String(name || '');
+  if (/南下|南向/.test(str)) return 180;
+  if (/北上|北向/.test(str)) return 0;
+  if (/東向/.test(str)) return 90;
+  if (/西向/.test(str)) return 270;
+  const englishHeading = directionToHeading(name);
+  if (Number.isFinite(englishHeading)) return englishHeading;
+  return null;
+}
+
+/**
+ * Normalize one raw Taiwan CCTV row into a God's Eye View camera source.
+ *
+ * @param {object} row - Raw row from thbapp freeway/thb service.
+ * @param {boolean} [isFreeway=true] - Whether this camera is from the Freeway Bureau.
+ * @returns {object|null}
+ */
+export function normalizeTaiwanCamera(row, isFreeway = true) {
+  const lat = toFiniteNumber(row?.gisy ?? row?.lat);
+  const lon = toFiniteNumber(row?.gisx ?? row?.lon);
+  if (!isLikelyTaiwanCoordinate(lat, lon)) return null;
+
+  let stream;
+  try {
+    stream = new URL(String(row?.html || row?.url || ''));
+  } catch {
+    return null;
+  }
+  if (
+    stream.protocol !== 'https:' ||
+    stream.username ||
+    stream.password ||
+    !(
+      stream.hostname.endsWith('.freeway.gov.tw') ||
+      stream.hostname.endsWith('.thb.gov.tw')
+    )
+  ) {
+    return null;
+  }
+  const streamUrl = stream.href;
+
+  const rawId = String(row?.id || '').trim();
+  if (!rawId || rawId.length > 80) return null;
+  const safeId = rawId.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+  const cameraId = `taiwan-${safeId}`;
+
+  const title = String(row?.stakenumber || row?.name || '').trim();
+  const heading = extractTaiwanHeading(rawId, title);
+  const hasHeading = Number.isFinite(heading);
+  const city = findNearestTaiwanCity(lat, lon);
+
+  return {
+    id: cameraId,
+    name: title || (isFreeway ? `Freeway ${rawId}` : `Highway ${rawId}`),
+    city: city || 'Taiwan',
+    cityId: 'taiwan',
+    provider: isFreeway ? 'Taiwan Freeway Bureau' : 'Taiwan Highway Bureau',
+    lat,
+    lon,
+    headingDeg: hasHeading ? heading : fallbackHeadingFromId(cameraId),
+    headingConfidence: hasHeading ? 'high' : 'low',
+    pitchDeg: hasHeading ? -24 : -18,
+    fovDeg: hasHeading ? 56 : 44,
+    rangeM: hasHeading ? 210 : 145,
+    mountHeightM: hasHeading ? 10 : 8,
+    groundElevationM: 10,
+    feedType: 'mjpeg',
+    url: streamUrl,
+    snapshotUrl: streamUrl,
+    sourceKind: 'taiwan-open-data',
+    license: 'Open Government Data License, Taiwan (data.gov.tw)',
+    code: cameraDisplayCode(title || rawId),
+  };
+}
+
+/**
+ * Fetch and parse Taiwan traffic camera records from MOTC open data (Freeway Bureau & THB).
+ *
+ * @returns {Promise<Array<object>>} Normalized camera source objects.
+ */
+export async function loadTaiwanSourcesFromOpenData() {
+  const freewayEndpoint =
+    process.env.CCTV_TAIWAN_FREEWAY_URL || DEFAULT_TAIWAN_FREEWAY_URL;
+  const thbEndpoint = process.env.CCTV_TAIWAN_THB_URL || DEFAULT_TAIWAN_THB_URL;
+
+  const cameras = [];
+
+  const fetchPack = async (endpoint, isFreeway) => {
+    try {
+      const resp = await fetch(endpoint, {
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(CCTV_SOURCE_FETCH_TIMEOUT_MS),
+        redirect: 'error',
+      });
+      if (!resp.ok) {
+        console.warn(
+          `[CCTV] Taiwan ${isFreeway ? 'Freeway' : 'THB'} source download failed:`,
+          resp.status,
+        );
+        return [];
+      }
+      const rows = await readResponseJsonCapped(resp, TAIWAN_MAX_CATALOG_BYTES);
+      if (!Array.isArray(rows)) return [];
+      const list = [];
+      for (const row of rows) {
+        const item = normalizeTaiwanCamera(row, isFreeway);
+        if (item) list.push(item);
+      }
+      return list;
+    } catch (error) {
+      console.warn(
+        `[CCTV] Taiwan ${isFreeway ? 'Freeway' : 'THB'} source download error:`,
+        error?.message || error,
+      );
+      return [];
+    }
+  };
+
+  const results = await Promise.allSettled([
+    fetchPack(freewayEndpoint, true),
+    fetchPack(thbEndpoint, false),
+  ]);
+
+  for (const res of results) {
+    if (res.status === 'fulfilled' && Array.isArray(res.value)) {
+      cameras.push(...res.value);
+    }
+  }
+
+  const unique = Array.from(
+    new Map(cameras.map((camera) => [camera.id, camera])).values(),
+  );
+
+  const maxRaw = Number(
+    process.env.CCTV_TAIWAN_MAX_SOURCES || DEFAULT_TAIWAN_MAX_SOURCES,
+  );
+  const maxCount = Number.isFinite(maxRaw)
+    ? Math.max(8, Math.min(1000, Math.floor(maxRaw)))
+    : DEFAULT_TAIWAN_MAX_SOURCES;
+
+  const prioritized = prioritizeSources(unique, maxCount, TAIWAN_ANCHORS);
+  console.log(
+    `[CCTV] Loaded Taiwan camera sources: ${unique.length} Active (using nearest ${prioritized.length})`,
+  );
+  return prioritized;
+}
+
+/**
+ * Compass letter mapping for WSDOT features.
+ */
+const WSDOT_COMPASS_MAP = Object.freeze({
+  N: 0,
+  S: 180,
+  E: 90,
+  W: 270,
+  NE: 45,
+  NW: 315,
+  SE: 135,
+  SW: 225,
+});
+
+/**
+ * Determine the nearest Washington reference city for a given coordinate.
+ *
+ * @param {number} lat
+ * @param {number} lon
+ * @returns {string} City name.
+ */
+export function findNearestWashingtonCity(lat, lon) {
+  let best = WASHINGTON_ANCHORS[0].name;
+  let minD = Infinity;
+  for (const anchor of WASHINGTON_ANCHORS) {
+    const d = (anchor.lat - lat) ** 2 + (anchor.lon - lon) ** 2;
+    if (d < minD) {
+      minD = d;
+      best = anchor.name;
+    }
+  }
+  return best;
+}
+
+/**
+ * Infer camera compass heading from WSDOT CompassDirection and CameraTitle.
+ *
+ * @param {string} compassDirection - e.g. "N", "S", "B", "O".
+ * @param {string} title - Camera title (e.g. "I-5 at Interstate Bridge SB").
+ * @returns {number|null} Compass heading [0..360) or null.
+ */
+export function extractWashingtonHeading(compassDirection, title) {
+  const code = String(compassDirection || '')
+    .trim()
+    .toUpperCase();
+  if (code in WSDOT_COMPASS_MAP) {
+    return WSDOT_COMPASS_MAP[code];
+  }
+  const inferred = directionToHeading(title, false);
+  if (Number.isFinite(inferred)) {
+    return inferred;
+  }
+  return null;
+}
+
+/**
+ * Normalize one raw WSDOT FeatureServer record into a God's Eye View camera source.
+ *
+ * @param {object} feature - ArcGIS feature with attributes and geometry.
+ * @returns {object|null}
+ */
+export function normalizeWsdotCamera(feature) {
+  const attrs = feature?.attributes;
+  const geom = feature?.geometry;
+  if (!attrs || !geom) return null;
+
+  const lat = toFiniteNumber(geom.y ?? geom.lat);
+  const lon = toFiniteNumber(geom.x ?? geom.lon);
+  if (!isLikelyWashingtonCoordinate(lat, lon)) return null;
+
+  const rawUrl = String(attrs.ImageURL || attrs.imageUrl || '').trim();
+  let imgUrl;
+  try {
+    imgUrl = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+  if (
+    imgUrl.protocol !== 'https:' ||
+    imgUrl.username ||
+    imgUrl.password ||
+    !(
+      imgUrl.hostname === 'images.wsdot.wa.gov' ||
+      imgUrl.hostname.endsWith('.wsdot.wa.gov') ||
+      imgUrl.hostname === 'tripcheck.com' ||
+      imgUrl.hostname.endsWith('.tripcheck.com') ||
+      imgUrl.hostname === 'www.seattle.gov' ||
+      imgUrl.hostname.endsWith('.seattle.gov')
+    )
+  ) {
+    return null;
+  }
+
+  const objectId = attrs.OBJECTID ?? attrs.CameraID ?? attrs.id;
+  if (
+    objectId === undefined ||
+    objectId === null ||
+    String(objectId).trim() === ''
+  ) {
+    return null;
+  }
+  const safeId = String(objectId)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, '-');
+  const cameraId = `wsdot-${safeId}`;
+
+  const title = String(
+    attrs.CameraTitle || attrs.Title || attrs.name || '',
+  ).trim();
+  const heading = extractWashingtonHeading(attrs.CompassDirection, title);
+  const hasHeading = Number.isFinite(heading);
+  const city = findNearestWashingtonCity(lat, lon);
+
+  return {
+    id: cameraId,
+    name: title || `WSDOT Camera ${safeId}`,
+    city: city || 'Washington',
+    cityId: 'washington',
+    provider: 'WSDOT',
+    lat,
+    lon,
+    headingDeg: hasHeading ? heading : fallbackHeadingFromId(cameraId),
+    headingConfidence: hasHeading ? 'high' : 'low',
+    pitchDeg: hasHeading ? -24 : -18,
+    fovDeg: hasHeading ? 56 : 44,
+    rangeM: hasHeading ? 210 : 145,
+    mountHeightM: hasHeading ? 10 : 8,
+    groundElevationM: 10,
+    feedType: 'image',
+    url: imgUrl.href,
+    snapshotUrl: imgUrl.href,
+    sourceKind: 'wsdot-open-data',
+    license: 'Public Domain / WSDOT Open Data',
+    code: cameraDisplayCode(title || safeId),
+  };
+}
+
+/**
+ * Fetch and parse Washington State DOT traffic camera records from the official ArcGIS FeatureServer.
+ *
+ * @returns {Promise<Array<object>>} Normalized camera source objects.
+ */
+export async function loadWsdotSourcesFromOpenData() {
+  const endpoint = process.env.CCTV_WSDOT_URL || DEFAULT_WSDOT_URL;
+  try {
+    const resp = await fetch(endpoint, {
+      headers: { Accept: 'application/json', 'User-Agent': 'gods-eye-view' },
+      signal: AbortSignal.timeout(CCTV_SOURCE_FETCH_TIMEOUT_MS),
+      redirect: 'error',
+    });
+    if (!resp.ok) {
+      console.warn('[CCTV] WSDOT source download failed:', resp.status);
+      return [];
+    }
+    const data = await readResponseJsonCapped(resp, WSDOT_MAX_CATALOG_BYTES);
+    const features = Array.isArray(data?.features) ? data.features : [];
+    const cameras = [];
+    for (const f of features) {
+      const item = normalizeWsdotCamera(f);
+      if (item) cameras.push(item);
+    }
+    const unique = Array.from(
+      new Map(cameras.map((camera) => [camera.id, camera])).values(),
+    );
+    const maxRaw = Number(
+      process.env.CCTV_WSDOT_MAX_SOURCES || DEFAULT_WSDOT_MAX_SOURCES,
+    );
+    const maxCount = Number.isFinite(maxRaw)
+      ? Math.max(8, Math.min(2000, Math.floor(maxRaw)))
+      : DEFAULT_WSDOT_MAX_SOURCES;
+
+    const prioritized = prioritizeSources(unique, maxCount, WASHINGTON_ANCHORS);
+    console.log(
+      `[CCTV] Loaded WSDOT camera sources: ${unique.length} Active (using nearest ${prioritized.length})`,
+    );
+    return prioritized;
+  } catch (error) {
+    console.warn(
+      '[CCTV] WSDOT source download error:',
       error?.message || error,
     );
     return [];

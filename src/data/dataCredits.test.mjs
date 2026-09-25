@@ -37,3 +37,31 @@ test('adsbdb is credited and carries its published route-data restriction', () =
   assert.match(credit.html, /Guillaume Michel/);
   assert.match(credit.html, /href="https:\/\/www\.adsbdb\.com"/);
 });
+
+test('taiwan-cctv is credited with Taiwan MOTC & Freeway Bureau attribution', () => {
+  const credit = DATA_CREDITS.find((entry) => entry.key === 'taiwan-cctv');
+  assert.ok(
+    credit,
+    'taiwan-cctv supplies open traffic camera streams and must be credited',
+  );
+  assert.match(
+    credit.html,
+    /Taiwan Ministry of Transportation and Communications \(MOTC\) &amp; Freeway Bureau/,
+  );
+  assert.match(credit.html, /Open Government Data/);
+  assert.match(credit.html, /href="https:\/\/data\.gov\.tw\/"/);
+});
+
+test('wsdot-cctv is credited with Washington State DOT attribution', () => {
+  const credit = DATA_CREDITS.find((entry) => entry.key === 'wsdot-cctv');
+  assert.ok(
+    credit,
+    'wsdot-cctv supplies open traffic camera feeds and must be credited',
+  );
+  assert.match(
+    credit.html,
+    /Washington State Department of Transportation \(WSDOT\)/,
+  );
+  assert.match(credit.html, /Open Data/);
+  assert.match(credit.html, /href="https:\/\/wsdot\.wa\.gov\/"/);
+});
